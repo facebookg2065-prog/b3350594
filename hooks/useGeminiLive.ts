@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { createBlob, decodeAudioData, decodeBase64ToUint8Array } from '../utils/audioUtils';
@@ -96,7 +97,7 @@ export const useGeminiLive = ({ apiKey }: UseGeminiLiveProps) => {
       const ai = new GoogleGenAI({ apiKey });
       
       // Connect to Live API
-      sessionPromiseRef.current = ai.live.connect({
+      const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         callbacks: {
           onopen: () => {
@@ -111,15 +112,13 @@ export const useGeminiLive = ({ apiKey }: UseGeminiLiveProps) => {
             scriptProcessorRef.current = scriptProcessor;
 
             scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-              if (!isActive) return; // Guard
+              // CRITICAL: Solely rely on sessionPromise resolves and then call `session.sendRealtimeInput`, **do not** add other condition checks.
               const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
               const pcmBlob = createBlob(inputData);
               
-              if (sessionPromiseRef.current) {
-                sessionPromiseRef.current.then((session: any) => {
-                   session.sendRealtimeInput({ media: pcmBlob });
-                });
-              }
+              sessionPromise.then((session: any) => {
+                 session.sendRealtimeInput({ media: pcmBlob });
+              });
             };
 
             source.connect(scriptProcessor);
@@ -160,7 +159,9 @@ export const useGeminiLive = ({ apiKey }: UseGeminiLiveProps) => {
              
              const interrupted = message.serverContent?.interrupted;
              if (interrupted) {
-                sourcesRef.current.forEach(s => s.stop());
+                for (const source of sourcesRef.current.values()) {
+                  source.stop();
+                }
                 sourcesRef.current.clear();
                 nextStartTimeRef.current = 0;
                 setIsSpeaking(false);
@@ -184,13 +185,15 @@ export const useGeminiLive = ({ apiKey }: UseGeminiLiveProps) => {
             systemInstruction: "You are a helpful assistant for 'Souq Al-Juma', an online marketplace in the Middle East. You speak Arabic and English. Help users find products, understand categories, and navigate the site. Be brief and friendly."
         }
       });
+      
+      sessionPromiseRef.current = sessionPromise;
 
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to start audio session");
       stop();
     }
-  }, [apiKey, isActive, stop]);
+  }, [apiKey, stop]);
 
   return {
     isActive,
